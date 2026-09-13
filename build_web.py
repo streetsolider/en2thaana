@@ -33,7 +33,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from en2thaana import gazetteer  # noqa: E402
+from en2thaana import gazetteer, render  # noqa: E402
+from en2thaana import ipa as IPA  # noqa: E402
 from en2thaana.text import ABBREV, ARABIC_PUNCT, LETTER_NAMES, _TOKEN  # noqa: E402
 
 OUT = ROOT / "web" / "public"
@@ -53,7 +54,31 @@ def build_assets() -> dict:
     dict_txt = NL.join(lines)
     (OUT / "dict.txt").write_text(dict_txt, encoding="utf-8", newline=NL)
 
+    # The rule engine's tables, so the browser can render phonemes the model
+    # invents for a word no dictionary has. The orthographic table is exported
+    # ALREADY FILTERED by the confidence guard, so the JS port cannot apply a
+    # different threshold than the Python engine does.
+    cons, vows, coda, orth = render._tables()
+    engine = {
+        "cons": cons,
+        "vows": vows,
+        "coda": coda,
+        "orth": {p + "|" + o: f for (p, o), f in orth.items()},
+        "phonemes": sorted(IPA.PHONEMES, key=len, reverse=True),
+        "normalise": IPA._NORMALISE,
+        "drop": IPA._DROP,
+        "expand": IPA.EXPAND,
+        "vowelChars": IPA.VOWEL_PHONE_CHARS,
+        "split": render.SPLIT_DIPHTHONGS,
+        "glide": {"fili": render.GLIDE_FILI, "carrier": render.GLIDE_CARRIER,
+                  "shorten": render.SHORTEN},
+        "alifu": "އ",
+        "sukun": "ް",
+        "fili": list(__import__("en2thaana.thaana", fromlist=["FILI"]).FILI),
+    }
+
     data = {
+        "engine": engine,
         "tokenRe": _TOKEN.pattern,
         "punct": ARABIC_PUNCT,
         "letters": LETTER_NAMES,
@@ -101,6 +126,19 @@ def build_standalone() -> None:
                  app, flags=re.S)
     app = app.replace("export ", "")
 
+    # The rule engine comes too, so an unknown word can still be written out if
+    # the model is ever reachable. From file:// it will not be -- fetch cannot
+    # read the .onnx files off disk -- and g2p.js reports that rather than
+    # failing silently.
+    engine = (OUT / "engine.js").read_text(encoding="utf-8")
+    engine = engine.replace('import { DATA } from "./data.js";', "")
+    engine = engine.replace("export ", "")
+    g2p = (OUT / "g2p.js").read_text(encoding="utf-8")
+    g2p = g2p.replace('import { convert } from "./engine.js";', "")
+    g2p = g2p.replace("export ", "")
+    # its exports are referenced as g2p.* by the page
+    g2p += NL + "const g2p = { load, isLoaded, phonemesFor, transcribeUnknown };" + NL
+
     data_obj = data.split("export const DATA = ", 1)[1].rstrip().rstrip(";")
 
     head = [
@@ -120,8 +158,10 @@ def build_standalone() -> None:
     page = html.split('<script type="module">', 1)[1].rsplit("</script>", 1)[0]
     page = page.replace('import { load, transcribe } from "./app.js";', "")
     page = page.replace('import { DATA } from "./data.js";', "")
+    page = page.replace('import * as g2p from "./g2p.js";', "")
 
-    merged = "<script>" + NL + NL.join(head) + NL + app + NL + page + NL + "</script>"
+    merged = ("<script>" + NL + NL.join(head) + NL + engine + NL + app + NL
+              + g2p + NL + page + NL + "</script>")
     html = (html.split('<script type="module">', 1)[0] + merged
             + html.rsplit("</script>", 1)[1])
 
@@ -134,6 +174,13 @@ def build_standalone() -> None:
 def main() -> None:
     build_assets()
     build_standalone()
+    # The JS engine is a port of the Python one and ports drift. Both are run
+    # over every shipped word and compared; a divergence would otherwise only
+    # show on words the model invents, which are exactly the words that have no
+    # reference spelling to notice it against.
+    import verify_js
+    if verify_js.main() != 0:
+        raise SystemExit("the JS engine disagrees with Python; not shipping")
 
 
 if __name__ == "__main__":

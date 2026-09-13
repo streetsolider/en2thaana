@@ -111,14 +111,27 @@ Each fix, measured as it went in:
 
 ## Words it has never seen
 
-The dictionary holds 139,219 words. For anything outside it, names mostly, there
-is a small model that predicts the pronunciation, and the same rules then write
-it in Thaana. It has 5.3 million parameters and trains in six minutes.
+The dictionary holds 139,219 words. For anything outside it, names mostly, a
+small model predicts the pronunciation and the same rules write it in Thaana. It
+has 5.3 million parameters and trains in six minutes.
 
 It gets the sounds exactly right 67% of the time, but the Thaana comes out right
 **71%** of the time. Thaana has fewer vowels than the phonetic alphabet does, so
 a good number of the model's mistakes land on the same letter anyway and stop
 being mistakes.
+
+The model runs **in the browser**. It is fetched only when a page actually meets
+a word the dictionary lacks, because it is 5.7 MB and most text never needs it.
+
+```
+cryptocurrency  ކްރިޕްޓޮކަރަންސީ      blockchain  ބްލޮކްޗޭން
+fintech         ފިންޓެކް              nasheed     ނެޝީޑް
+```
+
+That means the rules had to be ported to JavaScript, since the model produces
+sounds and something has to write them down. A port drifts, so `build_web.py`
+runs both engines over all 139,219 words and refuses to ship if one word
+disagrees. Today none do.
 
 Maldivian place names skip the model entirely. *Hithadhoo* is ހިތަދޫ because
 that is how it is spelled, and no amount of guessing from the letters would land
@@ -165,8 +178,11 @@ The /juː/ carrier is a coin flip. The reference writes *music* as މިޔުޒި�
 English spelling does not predict which. A Dhivehi speaker picked ޔ and that is
 what it does.
 
-The out-of-vocabulary model is not in this repository, so an unknown word comes
-back marked rather than guessed until you run `train_g2p.py`.
+The model is quantized to 8 bits to get from 21 MB to 5.7 MB. On a couple of
+words in twenty that changes which phoneme wins, so the page can give a slightly
+different answer than the full model would. Both are guesses on words no
+dictionary has. The float export is checked against PyTorch first, so a real
+export bug cannot hide inside that allowance.
 
 Word-initial consonants are the least well tested part, because the reference
 corpus is thin there.
