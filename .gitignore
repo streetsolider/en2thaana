@@ -1,0 +1,27 @@
+# Third-party pronunciation lexicons. Not ours to redistribute.
+data/*
+
+# Island and atoll names are public registry data, so they ship: the package
+# works out of the box without pointing it at anything local.
+!data/gazetteer/
+
+# The evaluation reference is commercially published; those entries are the
+# evaluation reference only and must never be redistributed. The disagreement
+# report quotes his spellings, so it is withheld too.
+eval/reports/hh_disagreements.tsv
+eval/reports/unaligned.tsv
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+models/
+*.log
+
+# Repair artifact containing registry addresses. Harvested data does not
+# belong in git.
+eval/reports/addresses_naviyani.tsv
+
+# Local paths to data this repo does not ship.
+.env
+eval/reports/*.txt
