@@ -36,7 +36,7 @@ header p{margin:0;color:var(--muted);font-size:14px}
 textarea{
   width:100%;min-height:118px;padding:14px;border-radius:12px;
   border:1px solid var(--line);background:var(--panel);color:var(--ink);
-  font:inherit;resize:vertical
+  font:inherit;resize:vertical;display:block;margin-bottom:4px
 }
 textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .bar{display:flex;gap:8px;align-items:center;margin:10px 0 16px;flex-wrap:wrap}
@@ -83,7 +83,7 @@ footer{margin-top:30px;padding-top:18px;border-top:1px solid var(--line);
        color:var(--muted);font-size:13px;line-height:1.7}
 footer b{color:var(--ink)}
 footer code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
-.ex{display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 14px}
+.ex{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 18px}
 .ex button{font-size:13px;padding:7px 11px;min-height:0;font-weight:500;color:var(--muted)}
 </style>
 </head>
@@ -120,6 +120,7 @@ footer code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
     <div class="thaana" id="out"></div>
   </div>
   <div class="stats" id="stats"></div>
+  <div class="loading" id="guessnote" style="margin:-8px 0 16px"></div>
 
   <div id="tablewrap" class="hidden">
     <table>
@@ -134,16 +135,26 @@ footer code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 <script type="module">
 import { load, transcribe } from "./app.js";
 import { DATA } from "./data.js";
+import * as g2p from "./g2p.js";
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 let timer = null;
 
+const guessed = new Map();      // word -> {ipa, thaana} from the model
+
 function run() {
   const text = $("#in").value;
   if (!text.trim()) { $("#out").innerHTML = ""; $("#stats").innerHTML = ""; return; }
   const toks = transcribe(text);
+  for (const t of toks) {
+    if (t.thaana === null && guessed.has(t.text.toLowerCase())) {
+      const g = guessed.get(t.text.toLowerCase());
+      t.thaana = g.thaana; t.source = "guessed";
+    }
+  }
+  fillUnknown(toks);
 
   $("#out").innerHTML = toks.map((t) =>
     t.thaana === null ? '<span class="unk">' + esc(t.text) + "</span>" : esc(t.thaana)
@@ -152,10 +163,12 @@ function run() {
   const words = toks.filter((t) => t.kind === "word" || t.kind === "placename");
   const miss = words.filter((t) => t.thaana === null);
   const gaz = words.filter((t) => t.source === "registry");
+  const guess = words.filter((t) => t.source === "guessed");
   $("#stats").innerHTML =
     "<span><b>" + words.length + "</b> words</span>" +
     "<span><b>" + (words.length - miss.length) + "</b> transcribed</span>" +
     (gaz.length ? '<span style="color:var(--ok)"><b>' + gaz.length + "</b> from registry</span>" : "") +
+    (guess.length ? '<span style="color:var(--accent)"><b>' + guess.length + "</b> guessed by the model</span>" : "") +
     (miss.length ? '<span style="color:var(--warn)"><b>' + miss.length + "</b> not known</span>" : "");
 
   $("#tbody").innerHTML = toks
@@ -166,6 +179,33 @@ function run() {
       '<td class="th">' + (t.thaana ? esc(t.thaana) : "—") + "</td>" +
       '<td><span class="tag ' + (t.source === "registry" ? "registry" : t.source ? "" : "none") +
         '">' + esc(t.source || "not known") + "</span></td></tr>").join("");
+}
+
+// The dictionary answers instantly. Anything it does not have is handed to the
+// model, which is 5.7 MB and so is fetched only when a page actually needs it.
+// The result is rendered a second time rather than making the first wait.
+let guessing = false;
+async function fillUnknown(toks) {
+  const want = [...new Set(toks.filter((t) => t.thaana === null)
+                               .map((t) => t.text.toLowerCase()))]
+    .filter((w) => !guessed.has(w));
+  if (!want.length || guessing) return;
+  guessing = true;
+  const note = $("#guessnote");
+  try {
+    if (!g2p.isLoaded()) note.textContent = "loading the model for " + want.length +
+      " unknown word" + (want.length === 1 ? "" : "s") + "…";
+    for (const w of want) {
+      const r = await g2p.transcribeUnknown(w);
+      if (r) guessed.set(w, r);
+    }
+    note.textContent = "";
+    run();
+  } catch (e) {
+    note.textContent = "the model could not be loaded, so unknown words stay in Latin";
+  } finally {
+    guessing = false;
+  }
 }
 
 $("#go").onclick = run;
